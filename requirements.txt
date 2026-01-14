@@ -39,3 +39,4 @@ watchdog==6.0.0
 streamlit
 streamlit-autorefresh
 streamlit-mic-recorder
+Pillow
