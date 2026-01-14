@@ -3,71 +3,52 @@ from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 from streamlit_mic_recorder import mic_recorder
 
-# გვერდის კონფიგურაცია მობილურისთვის
-st.set_page_config(
-    page_title="Real-Time Voice Chat", 
-    page_icon="🎤", 
-    layout="centered"
-)
+# გვერდის კონფიგურაცია
+st.set_page_config(page_title="Real-Time Voice Chat", page_icon="🎤", layout="centered")
 
-# --- გლობალური მონაცემების შენახვა (Shared State) ---
+# --- გლობალური მონაცემების შენახვა ---
 @st.cache_resource
 def get_global_data():
-    # ეს მონაცემები საერთოა ყველა მომხმარებლისთვის
-    return {
-        "messages": [],
-        "online_users": set()
-    }
+    return {"messages": [], "online_users": set()}
 
 data = get_global_data()
 
-# ავტომატური განახლება ყოველ 3 წამში (რომ ჩატი ცოცხალი იყოს)
+# ავტომატური განახლება ყოველ 3 წამში
 st_autorefresh(interval=3000, key="datarefresh")
 
-# სესიის მართვა (ლოკალური მომხმარებელი)
 if "username" not in st.session_state:
     st.session_state.username = None
 
-# --- რეგისტრაციის ფორმა ---
+# --- რეგისტრაცია ---
 if st.session_state.username is None:
     st.title("ჩატში შესვლა 💬")
-    with st.form("login_form"):
-        name = st.text_input("შეიყვანეთ თქვენი სახელი:", placeholder="მაგ: გიორგი")
-        submit = st.form_submit_button("შესვლა")
-        
-        if submit and name:
+    with st.form("login"):
+        name = st.text_input("შეიყვანეთ თქვენი სახელი:")
+        if st.form_submit_button("შესვლა") and name:
             st.session_state.username = name
             data["online_users"].add(name)
             st.rerun()
-        elif submit and not name:
-            st.error("გთხოვთ, ჩაწეროთ სახელი.")
 else:
-    # --- ჩატის მთავარი ინტერფეისი ---
-    
-    # ზედა პანელი სტატისტიკით
-    st.markdown(f"### 💬 საერთო ოთახი")
+    # --- ჩატის ინტერფეისი ---
+    st.markdown(f"### 💬 ოთახი: {st.session_state.username}")
     st.write(f"🟢 ონლაინ: **{len(data['online_users'])}**")
-    
-    with st.expander("ნახე ვინ არის აქ"):
-        st.write(", ".join(data["online_users"]))
 
-    st.divider()
-
-    # შეტყობინებების ჩვენების არე
+    # შეტყობინებების ჩვენება
     chat_container = st.container()
-
     with chat_container:
         for msg in data["messages"]:
             with st.chat_message(msg["user"]):
                 st.write(f"**{msg['user']}** | `{msg['time']}`")
                 if msg["type"] == "text":
                     st.write(msg["content"])
-                elif msg["type"] == "audio":
+                else:
                     st.audio(msg["content"], format="audio/wav")
 
-    # --- შეტყობინების გაგზავნის სექცია ---
+    st.divider()
+
+    # --- შეტყობინების გაგზავნა ---
     
-    # 1. ტექსტური ინპუტი
+    # ტექსტი
     if prompt := st.chat_input("დაწერე შეტყობინება..."):
         data["messages"].append({
             "user": st.session_state.username,
@@ -77,19 +58,27 @@ else:
         })
         st.rerun()
 
-    # 2. ხმოვანი შეტყობინება (მოთავსებულია Sidebar-ში ან ბოლოში)
-    st.sidebar.markdown("### 🎤 ხმოვანი ჩანაწერი")
+    # ხმა (გამოსწორებული ფუნქცია)
+    st.sidebar.write("🎤 ხმის ჩაწერა:")
+    # წავშალეთ use_recorder=True, რადგან ის ხშირად იწვევს შეცდომას
     audio = mic_recorder(
         start_prompt="ჩაწერა 🎙️",
         stop_prompt="გაგზავნა ✅",
-        key='recorder',
-        use_recorder=True
+        key='recorder'
     )
 
-    if audio:
+    if audio and 'bytes' in audio:
         audio_bytes = audio['bytes']
-        # ვამოწმებთ, რომ ბოლო შეტყობინება იგივე აუდიო არ იყოს (დუბლირების თავიდან ასაცილებლად)
-        if not data["messages"] or data["messages"][-1].get("content") != audio_bytes:
+        
+        # ვამოწმებთ, რომ ეს კონკრეტული აუდიო უკვე არ არის ბოლო შეტყობინება
+        # ვიყენებთ ჰეშს ან ზომას მარტივი შედარებისთვის
+        is_duplicate = False
+        if data["messages"]:
+            last_msg = data["messages"][-1]
+            if last_msg["type"] == "audio" and len(last_msg["content"]) == len(audio_bytes):
+                is_duplicate = True
+        
+        if not is_duplicate:
             data["messages"].append({
                 "user": st.session_state.username,
                 "type": "audio",
@@ -98,9 +87,7 @@ else:
             })
             st.rerun()
 
-    # გასვლის ღილაკი
-    if st.sidebar.button("ჩატიდან გასვლა"):
-        if st.session_state.username in data["online_users"]:
-            data["online_users"].remove(st.session_state.username)
+    if st.sidebar.button("გამოსვლა"):
+        data["online_users"].discard(st.session_state.username)
         st.session_state.username = None
         st.rerun()
