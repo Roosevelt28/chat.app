@@ -2,11 +2,12 @@ import streamlit as st
 from datetime import datetime
 from streamlit_autorefresh import st_autorefresh
 from streamlit_mic_recorder import mic_recorder
+import hashlib
 
 # გვერდის კონფიგურაცია
 st.set_page_config(page_title="Real-Time Voice Chat", page_icon="🎤", layout="centered")
 
-# --- გლობალური მონაცემების შენახვა ---
+# --- გლობალური მონაცემების შენახვა (ყველა მომხმარებლისთვის) ---
 @st.cache_resource
 def get_global_data():
     return {"messages": [], "online_users": set()}
@@ -16,8 +17,12 @@ data = get_global_data()
 # ავტომატური განახლება ყოველ 3 წამში
 st_autorefresh(interval=3000, key="datarefresh")
 
+# --- სესიის მართვა (ლოკალური მომხმარებლისთვის) ---
 if "username" not in st.session_state:
     st.session_state.username = None
+# აქ ვინახავთ ბოლო გაგზავნილი აუდიოს "თითის ანაბეჭდს" (ჰეშს)
+if "last_audio_hash" not in st.session_state:
+    st.session_state.last_audio_hash = None
 
 # --- რეგისტრაცია ---
 if st.session_state.username is None:
@@ -30,7 +35,7 @@ if st.session_state.username is None:
             st.rerun()
 else:
     # --- ჩატის ინტერფეისი ---
-    st.markdown(f"### 💬 ოთახი: {st.session_state.username}")
+    st.markdown(f"### 💬 ოთახი")
     st.write(f"🟢 ონლაინ: **{len(data['online_users'])}**")
 
     # შეტყობინებების ჩვენება
@@ -48,7 +53,7 @@ else:
 
     # --- შეტყობინების გაგზავნა ---
     
-    # ტექსტი
+    # 1. ტექსტური შეტყობინება
     if prompt := st.chat_input("დაწერე შეტყობინება..."):
         data["messages"].append({
             "user": st.session_state.username,
@@ -58,9 +63,8 @@ else:
         })
         st.rerun()
 
-    # ხმა (გამოსწორებული ფუნქცია)
-    st.sidebar.write("🎤 ხმის ჩაწერა:")
-    # წავშალეთ use_recorder=True, რადგან ის ხშირად იწვევს შეცდომას
+    # 2. ხმოვანი შეტყობინება
+    st.sidebar.write("🎤 ჩაწერე ხმა:")
     audio = mic_recorder(
         start_prompt="ჩაწერა 🎙️",
         stop_prompt="გაგზავნა ✅",
@@ -68,25 +72,22 @@ else:
     )
 
     if audio and 'bytes' in audio:
-        audio_bytes = audio['bytes']
+        # ვქმნით აუდიოს უნიკალურ ID-ს (ჰეშს)
+        current_audio_hash = hashlib.md5(audio['bytes']).hexdigest()
         
-        # ვამოწმებთ, რომ ეს კონკრეტული აუდიო უკვე არ არის ბოლო შეტყობინება
-        # ვიყენებთ ჰეშს ან ზომას მარტივი შედარებისთვის
-        is_duplicate = False
-        if data["messages"]:
-            last_msg = data["messages"][-1]
-            if last_msg["type"] == "audio" and len(last_msg["content"]) == len(audio_bytes):
-                is_duplicate = True
-        
-        if not is_duplicate:
+        # ვამოწმებთ, ეს აუდიო უკვე გავგზავნეთ თუ არა ამ სესიაში
+        if st.session_state.last_audio_hash != current_audio_hash:
             data["messages"].append({
                 "user": st.session_state.username,
                 "type": "audio",
-                "content": audio_bytes,
+                "content": audio['bytes'],
                 "time": datetime.now().strftime("%H:%M")
             })
+            # ვიმახსოვრებთ, რომ ეს აუდიო უკვე გაიგზავნა
+            st.session_state.last_audio_hash = current_audio_hash
             st.rerun()
 
+    # გასვლა
     if st.sidebar.button("გამოსვლა"):
         data["online_users"].discard(st.session_state.username)
         st.session_state.username = None
