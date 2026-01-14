@@ -4,9 +4,11 @@ from streamlit_autorefresh import st_autorefresh
 from streamlit_mic_recorder import mic_recorder
 import hashlib
 import uuid
+from PIL import Image
+import io
 
 # გვერდის კონფიგურაცია
-st.set_page_config(page_title="Real-Time Pro Chat", page_icon="💬", layout="centered")
+st.set_page_config(page_title="Pro Chat & Media", page_icon="📸", layout="centered")
 
 # --- გლობალური მონაცემების შენახვა ---
 @st.cache_resource
@@ -35,74 +37,82 @@ if st.session_state.username is None:
 else:
     # --- ჩატის ინტერფეისი ---
     st.markdown(f"### 💬 საერთო ოთახი")
-    st.write(f"🟢 ონლაინ: **{len(data['online_users'])}**")
+    
+    col_stat1, col_stat2 = st.columns([2, 1])
+    col_stat1.write(f"🟢 ონლაინ: **{len(data['online_users'])}**")
+    if col_stat2.button("🧹 ჩატის გასუფთავება"):
+        data["messages"] = []
+        st.rerun()
 
     # შეტყობინებების ჩვენება
     chat_container = st.container()
     with chat_container:
-        # ვიყენებთ enumerate-ს ინდექსისთვის, რომ წაშლა გაგვიადვილდეს
         for idx, msg in enumerate(data["messages"]):
+            # KeyError-ის პრევენცია: თუ ძველი მესიჯია, ვამატებთ ცარიელ რეაქციებს
+            if "reactions" not in msg:
+                msg["reactions"] = {"❤️": [], "😂": [], "👍": [], "🔥": []}
+            if "id" not in msg:
+                msg["id"] = str(uuid.uuid4())
+
             with st.chat_message(msg["user"]):
                 col_text, col_action = st.columns([4, 1])
                 
                 with col_text:
                     st.write(f"**{msg['user']}** | `{msg['time']}`")
+                    
+                    # შეტყობინების ტიპის მიხედვით ჩვენება
                     if msg["type"] == "text":
                         st.write(msg["content"])
-                    else:
+                    elif msg["type"] == "audio":
                         st.audio(msg["content"], format="audio/wav")
+                    elif msg["type"] == "image":
+                        st.image(msg["content"], use_container_width=True)
                     
                     # რეაქციების ჩვენება
-                    if msg["reactions"]:
-                        reaction_text = ""
-                        for emoji, users in msg["reactions"].items():
-                            if users:
-                                reaction_text += f"{emoji} {len(users)}  "
-                        if reaction_text:
-                            st.caption(reaction_text)
+                    reaction_list = [f"{k} {len(v)}" for k, v in msg["reactions"].items() if v]
+                    if reaction_list:
+                        st.caption("  ".join(reaction_list))
 
                 with col_action:
-                    # წაშლის ღილაკი (მხოლოდ ავტორისთვის)
                     if msg["user"] == st.session_state.username:
                         if st.button("🗑️", key=f"del_{msg['id']}"):
                             data["messages"].pop(idx)
                             st.rerun()
                 
                 # რეაქციების ღილაკები
-                re_col1, re_col2, re_col3, re_col4 = st.columns([1,1,1,7])
-                emojis = ["❤️", "😂", "👍", "🔥"]
-                cols = [re_col1, re_col2, re_col3, re_col4]
-                
-                for i, emoji in enumerate(emojis):
-                    with cols[i]:
-                        if st.button(emoji, key=f"re_{emoji}_{msg['id']}"):
-                            # თუ მომხმარებელს უკვე აქვს რეაქცია, ვაცილებთ, თუ არა - ვამატებთ
-                            if st.session_state.username in msg["reactions"][emoji]:
-                                msg["reactions"][emoji].remove(st.session_state.username)
-                            else:
-                                msg["reactions"][emoji].append(st.session_state.username)
-                            st.rerun()
+                re_cols = st.columns(5)
+                for i, emoji in enumerate(["❤️", "😂", "👍", "🔥"]):
+                    if re_cols[i].button(emoji, key=f"re_{emoji}_{msg['id']}"):
+                        if st.session_state.username in msg["reactions"][emoji]:
+                            msg["reactions"][emoji].remove(st.session_state.username)
+                        else:
+                            msg["reactions"][emoji].append(st.session_state.username)
+                        st.rerun()
 
     st.divider()
 
-    # --- შეტყობინების გაგზავნა ---
+    # --- მულტიმედია გაგზავნა ---
     
-    # 1. ტექსტური
-    if prompt := st.chat_input("დაწერე შეტყობინება..."):
+    # 1. ფოტოს ატვირთვა
+    uploaded_file = st.sidebar.file_uploader("🖼️ გაგზავნე ფოტო", type=['png', 'jpg', 'jpeg'])
+    if uploaded_file:
+        img = Image.open(uploaded_file)
+        # ფოტოს ოპტიმიზაცია (რომ სერვერი არ გაჭედოს)
+        img.thumbnail((500, 500))
         data["messages"].append({
             "id": str(uuid.uuid4()),
             "user": st.session_state.username,
-            "type": "text",
-            "content": prompt,
+            "type": "image",
+            "content": img,
             "time": datetime.now().strftime("%H:%M"),
             "reactions": {"❤️": [], "😂": [], "👍": [], "🔥": []}
         })
+        st.sidebar.success("ფოტო გაიგზავნა!")
         st.rerun()
 
     # 2. ხმოვანი
-    st.sidebar.write("🎤 ჩაწერე ხმა:")
+    st.sidebar.write("🎤 ხმის ჩაწერა:")
     audio = mic_recorder(start_prompt="ჩაწერა 🎙️", stop_prompt="გაგზავნა ✅", key='recorder')
-
     if audio and 'bytes' in audio:
         current_audio_hash = hashlib.md5(audio['bytes']).hexdigest()
         if st.session_state.last_audio_hash != current_audio_hash:
@@ -116,6 +126,18 @@ else:
             })
             st.session_state.last_audio_hash = current_audio_hash
             st.rerun()
+
+    # 3. ტექსტი
+    if prompt := st.chat_input("დაწერე შეტყობინება..."):
+        data["messages"].append({
+            "id": str(uuid.uuid4()),
+            "user": st.session_state.username,
+            "type": "text",
+            "content": prompt,
+            "time": datetime.now().strftime("%H:%M"),
+            "reactions": {"❤️": [], "😂": [], "👍": [], "🔥": []}
+        })
+        st.rerun()
 
     if st.sidebar.button("გამოსვლა"):
         data["online_users"].discard(st.session_state.username)
